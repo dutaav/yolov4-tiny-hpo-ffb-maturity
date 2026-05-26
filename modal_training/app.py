@@ -51,7 +51,7 @@ PRETRAINED = f"{VOL}/yolov4-tiny.conv.29"
 
 ROBOFLOW_WORKSPACE = "tugas-akhir-pybma"
 ROBOFLOW_PROJECT = "palm-ripeness-detection"
-ROBOFLOW_VERSION = 2
+ROBOFLOW_VERSION = 5
 
 HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
 
