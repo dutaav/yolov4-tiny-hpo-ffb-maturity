@@ -6,8 +6,13 @@ from pathlib import Path
 from typing import Iterator
 
 
-_RE_ITER = re.compile(r"^\s*(\d+):")
-_RE_LOSS = re.compile(r"(\d+\.\d+)\s+avg")
+_RE_ITER = re.compile(r"^\s*(\d+):\s*loss=")
+_RE_LOSS = re.compile(r"avg\s+loss=(\d+\.\d+)")
+_RE_ANSI = re.compile(
+    r"\x1b\[[0-9;]*[A-Za-z]"
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|[\x00-\x08\x0b-\x1f]"
+)
 _RE_MAP = re.compile(
     r"mean\s+average\s+precision\s*\(mAP@0\.50\)\s*=\s*([\d.]+)",
     re.IGNORECASE,
@@ -125,6 +130,7 @@ def stream_log_lines(file_or_proc) -> Iterator[str]:
 
 
 def parse_iteration_loss(line: str) -> tuple[int | None, float | None]:
+    line = _RE_ANSI.sub("", line)
     iter_m = _RE_ITER.match(line)
     loss_m = _RE_LOSS.search(line)
     return (
@@ -134,11 +140,16 @@ def parse_iteration_loss(line: str) -> tuple[int | None, float | None]:
 
 
 def parse_map(line: str) -> float | None:
+    line = _RE_ANSI.sub("", line)
     m = _RE_MAP.search(line)
-    return float(m.group(1)) if m else None
+    if not m:
+        return None
+    val = float(m.group(1))
+    return val / 100.0 if val > 1.0 else val
 
 
 def parse_eval_output(text: str) -> EvalMetrics:
+    text = _RE_ANSI.sub("", text)
     em = EvalMetrics()
     for line in text.splitlines():
         if (m := _RE_TP.search(line)): em.tp = int(m.group(1))
@@ -148,7 +159,9 @@ def parse_eval_output(text: str) -> EvalMetrics:
         if (m := _RE_REC.search(line)): em.recall = float(m.group(1))
         if (m := _RE_F1.search(line)): em.f1 = float(m.group(1))
         if (m := _RE_IOU.search(line)): em.iou = float(m.group(1)) / 100.0
-        if (m := _RE_MAP.search(line)): em.mAP = float(m.group(1))
+        if (m := _RE_MAP.search(line)):
+            val = float(m.group(1))
+            em.mAP = val / 100.0 if val > 1.0 else val
 
     if em.f1 == 0 and em.precision > 0 and em.recall > 0:
         em.f1 = 2 * em.precision * em.recall / (em.precision + em.recall)

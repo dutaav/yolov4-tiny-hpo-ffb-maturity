@@ -26,9 +26,11 @@ image = (
     .apt_install(
         "git", "wget", "build-essential",
         "libopencv-dev", "python3-opencv",
+        "libprotobuf-dev", "protobuf-compiler",
         "pkg-config",
     )
     .pip_install(
+        "cmake==3.30.5",
         "numpy==1.26.4",
         "opencv-python-headless==4.10.0.84",
         "roboflow==1.1.50",
@@ -56,6 +58,16 @@ ROBOFLOW_VERSION = 5
 
 HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
 
+DARKNET_BUILD_VERSION = "hank-ai-v5-cmake-fulltags"
+DARKNET_REPO_URL = "https://github.com/hank-ai/darknet.git"
+
+
+def _darknet_env() -> dict:
+    env = os.environ.copy()
+    ld = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = f"{DARKNET_DIR}:{ld}" if ld else DARKNET_DIR
+    return env
+
 
 @app.function(
     image=image,
@@ -63,8 +75,14 @@ HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
     timeout=1800,
 )
 def build_darknet(force: bool = False) -> str:
-    if not force and Path(DARKNET_BIN).exists():
-        print(f"[build_darknet] Already built at {DARKNET_BIN}, skipping.")
+    version_marker = Path(DARKNET_DIR) / ".darknet_build_version"
+    if (
+        not force
+        and Path(DARKNET_BIN).exists()
+        and version_marker.exists()
+        and version_marker.read_text().strip() == DARKNET_BUILD_VERSION
+    ):
+        print(f"[build_darknet] Already built ({DARKNET_BUILD_VERSION}) at {DARKNET_BIN}, skipping.")
         return DARKNET_BIN
 
     Path(VOL).mkdir(parents=True, exist_ok=True)
@@ -73,27 +91,38 @@ def build_darknet(force: bool = False) -> str:
         shutil.rmtree(DARKNET_DIR)
 
     subprocess.run(
-        ["git", "clone", "--depth", "1",
-         "https://github.com/AlexeyAB/darknet.git", DARKNET_DIR],
+        ["git", "clone",
+         DARKNET_REPO_URL, DARKNET_DIR],
         check=True,
     )
 
-    makefile = Path(DARKNET_DIR) / "Makefile"
-    txt = makefile.read_text()
-    for old, new in [
-        ("GPU=0", "GPU=1"),
-        ("CUDNN=0", "CUDNN=1"),
-        ("CUDNN_HALF=0", "CUDNN_HALF=1"),
-        ("OPENCV=0", "OPENCV=1"),
-        ("LIBSO=0", "LIBSO=1"),
-    ]:
-        txt = txt.replace(old, new)
-    makefile.write_text(txt)
+    build_dir = Path(DARKNET_DIR) / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
 
     subprocess.run(
-        ["make", "-j", str(os.cpu_count() or 4)],
-        cwd=DARKNET_DIR, check=True,
+        ["cmake", "-DCMAKE_BUILD_TYPE=Release", ".."],
+        cwd=build_dir, check=True,
     )
+    subprocess.run(
+        ["make", "-j", str(os.cpu_count() or 4)],
+        cwd=build_dir, check=True,
+    )
+
+    built_bin = build_dir / "src-cli" / "darknet"
+    built_lib = build_dir / "src-lib" / "libdarknet.so"
+    if not built_bin.exists():
+        for cand in build_dir.rglob("darknet"):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                built_bin = cand
+                break
+    if not built_lib.exists():
+        for cand in build_dir.rglob("libdarknet.so"):
+            built_lib = cand
+            break
+
+    shutil.copy(built_bin, DARKNET_BIN)
+    shutil.copy(built_lib, f"{DARKNET_DIR}/libdarknet.so")
+    os.chmod(DARKNET_BIN, 0o755)
 
     if not Path(PRETRAINED).exists():
         subprocess.run(
@@ -104,8 +133,9 @@ def build_darknet(force: bool = False) -> str:
             check=True,
         )
 
+    version_marker.write_text(DARKNET_BUILD_VERSION)
     volume.commit()
-    print(f"[build_darknet] Done. Binary: {DARKNET_BIN}")
+    print(f"[build_darknet] Done ({DARKNET_BUILD_VERSION}). Binary: {DARKNET_BIN}")
     return DARKNET_BIN
 
 
@@ -202,6 +232,7 @@ def _run_darknet_train(
     early_stopping: bool = False,
     patience: int = 5,
     data_path: str | None = None,
+    tag: str = "",
 ) -> tuple[float, int]:
     from darknet_utils import parse_iteration_loss, parse_map
 
@@ -215,7 +246,7 @@ def _run_darknet_train(
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1, cwd=DARKNET_DIR,
+        text=True, bufsize=1, cwd=DARKNET_DIR, env=_darknet_env(),
     )
 
     best_map = 0.0
@@ -235,17 +266,18 @@ def _run_darknet_train(
 
             mAP = parse_map(line)
             if mAP is not None:
+                prefix = f"[train:{tag}] " if tag else "  "
                 if mAP > best_map:
                     best_map = mAP
                     best_iter = current_iter
                     no_improve = 0
-                    print(f"  iter {current_iter}: mAP={mAP:.4f} [BEST]")
+                    print(f"{prefix}iter {current_iter}: mAP={mAP:.4f} [BEST]")
                 else:
                     no_improve += 1
-                    print(f"  iter {current_iter}: mAP={mAP:.4f} [no improve {no_improve}/{patience}]")
+                    print(f"{prefix}iter {current_iter}: mAP={mAP:.4f} [no improve {no_improve}/{patience}]")
 
                 if early_stopping and no_improve >= patience:
-                    print(f"  Early stopping at iter {current_iter} (best mAP={best_map:.4f} @ {best_iter})")
+                    print(f"{prefix}Early stopping at iter {current_iter} (best mAP={best_map:.4f} @ {best_iter})")
                     proc.terminate()
                     break
     finally:
@@ -261,7 +293,7 @@ def _run_darknet_train(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="A100-40GB",
+    gpu="H100",
     timeout=4 * 60 * 60,
 )
 def train_one_model(
@@ -281,6 +313,7 @@ def train_one_model(
     Path(CFG_DIR).mkdir(parents=True, exist_ok=True)
     Path(WEIGHTS_DIR).mkdir(parents=True, exist_ok=True)
     Path(LOGS_DIR).mkdir(parents=True, exist_ok=True)
+    Path(f"{VOL}/backup").mkdir(parents=True, exist_ok=True)
 
     cfg_path = f"{CFG_DIR}/{name}.cfg"
     log_path = f"{LOGS_DIR}/{name}.log"
@@ -300,6 +333,7 @@ def train_one_model(
         log_path=log_path,
         early_stopping=use_early_stopping,
         patience=patience,
+        tag=name,
     )
     elapsed = time.time() - t0
     print(f"[train:{name}] done in {elapsed:.1f}s, best mAP={best_map:.4f} @ iter {best_iter}")
@@ -328,7 +362,7 @@ def train_one_model(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="A100-40GB",
+    gpu="H100",
     timeout=60 * 60,
 )
 def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
@@ -357,7 +391,7 @@ def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
         [DARKNET_BIN, "detector", "train",
          f"{DATA_DIR}/obj.data", cfg_path, PRETRAINED,
          "-dont_show", "-mjpeg_port", "-1"],
-        cwd=DARKNET_DIR, check=True,
+        cwd=DARKNET_DIR, check=True, env=_darknet_env(),
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
@@ -366,7 +400,7 @@ def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
         [DARKNET_BIN, "detector", "map",
          f"{DATA_DIR}/obj.data", cfg_path, weights_path,
          "-dont_show"],
-        cwd=DARKNET_DIR, capture_output=True, text=True,
+        cwd=DARKNET_DIR, capture_output=True, text=True, env=_darknet_env(),
     )
     metrics = parse_eval_output(result.stdout)
 
@@ -381,7 +415,7 @@ def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="A100-40GB",
+    gpu="H100",
     timeout=30 * 60,
 )
 def evaluate_on_test(name: str, cfg_path: str, weights_path: str) -> dict:
@@ -396,7 +430,7 @@ def evaluate_on_test(name: str, cfg_path: str, weights_path: str) -> dict:
         result = subprocess.run(
             [DARKNET_BIN, "detector", "map",
              data_file, cfg_path, weights_path, "-dont_show"],
-            cwd=DARKNET_DIR, capture_output=True, text=True,
+            cwd=DARKNET_DIR, capture_output=True, text=True, env=_darknet_env(),
         )
         out[split] = parse_eval_output(result.stdout).to_dict()
         Path(f"{LOGS_DIR}/{name}_eval_{split}.txt").write_text(result.stdout)
@@ -464,6 +498,18 @@ def upload_to_hf(repo_id: str, run_tag: str = "") -> str:
     return url
 
 
+@app.function(image=image, volumes={VOL: volume}, timeout=120)
+def clean_training_files() -> None:
+    import shutil
+    for d in [WEIGHTS_DIR, LOGS_DIR, ARTIFACTS_DIR, CFG_DIR, f"{VOL}/backup"]:
+        p = Path(d)
+        if p.exists():
+            shutil.rmtree(p)
+            print(f"[clean] Removed {d}")
+    volume.commit()
+    print("[clean] Done. Dataset and darknet build preserved.")
+
+
 @app.local_entrypoint()
 def main(
     hf_repo: str = HF_REPO_DEFAULT,
@@ -473,6 +519,7 @@ def main(
     fitness_iters: int = 2000,
     n_generations: int = 5,
     n_population: int = 10,
+    clean: bool = False,
 ):
     from datetime import datetime
     from contextlib import contextmanager
@@ -496,6 +543,10 @@ def main(
             print(f"[{_ts()}] <<< {label} done in {mm}m {ss}s ({elapsed:.1f}s)")
 
     print(f"[{_ts()}] === Pipeline start (run_tag={run_tag or 'none'}) ===")
+
+    if clean:
+        with step("Step 0: Clean old training files"):
+            clean_training_files.remote()
 
     with step("Step 1: Build Darknet"):
         build_darknet.remote()
