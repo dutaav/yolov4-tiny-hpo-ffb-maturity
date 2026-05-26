@@ -2,7 +2,7 @@
 
 Replication of Salim and Suharjito (2023) with a split workflow:
 
-- **Training** on **Modal** (A100-40GB GPUs, parallel) -> uploads artifacts to **HuggingFace Hub**
+- **Training** on **Modal** (H100 GPU) -> uploads artifacts to **HuggingFace Hub**
 - **Inference and visualization** on **Google Colab** (T4 free tier) -> loads from HF Hub
 
 ## Structure
@@ -50,15 +50,26 @@ Outputs: evaluation tables, plots, bounding box samples, exported as a zip.
 
 ## Performance
 
-| Stage | Colab T4 (free) | Modal (A100-40GB) |
-|-------|-----------------|-----------------|
-| Darknet compilation | Each notebook run | Once, cached in volume |
-| Train Model 1+2 | Sequential ~3h | Parallel on A100-40GB ~25-40 min |
-| GA (50 fitness evals) | Sequential ~5h | 10 parallel A100-40GB containers ~15-25 min |
-| Train Model 3+4 | Sequential ~3h | Parallel on A100-40GB ~25-40 min |
-| **Total** | **10+ hours** | **~2.5-3.5 hours** |
+Actual training times from the H100 run (`runs/h100-hankai`):
 
-GA fitness evaluations run in parallel via `Modal.Function.map()` - 10 individuals = 10 simultaneous containers per generation.
+| Model | Elapsed | Iterations | GPU |
+|-------|---------|------------|-----|
+| model1_baseline | 60.6 min | 12000 | H100 |
+| model2_es | 40.7 min | 6430 (ES) | H100 |
+| model3_ga | 56.6 min | 10593 | H100 |
+| model4_es_ga | 30.3 min | 4258 (ES) | H100 |
+
+Models 1+2 train in parallel, then GA runs (5 gen x 10 individuals, each fitness eval = 3000 iter on its own H100), then models 3+4 in parallel.
+
+| Stage | Colab T4 (free) | Modal (H100) |
+|-------|-----------------|--------------|
+| Darknet compilation | Each notebook run | Once, cached in volume |
+| Train Model 1+2 | Sequential ~3h | Parallel ~61 min |
+| GA (50 fitness evals) | Sequential ~5h | 10 parallel H100 containers |
+| Train Model 3+4 | Sequential ~3h | Parallel ~57 min |
+| **Total** | **10+ hours (disconnects)** | **~2-3 hours wall clock** |
+
+GA fitness evaluations run in parallel via `Modal.Function.map()` - 10 individuals = 10 simultaneous H100 containers per generation.
 
 ## Editing the Colab notebook
 
@@ -71,11 +82,12 @@ python3 build_notebook.py
 
 ## Local scripts
 
-After training has uploaded artifacts to HF, pull them locally with
-`huggingface-cli download dutaav/yolov4-tiny-hpo-ffb-maturity --include 'runs/h100-hankai/*' --local-dir run_artifacts/`.
-Then:
+These helper scripts work after pulling weights from HuggingFace:
 
 ```bash
+# Pull trained weights and logs from HF Hub
+huggingface-cli download dutaav/yolov4-tiny-hpo-ffb-maturity --include 'runs/h100-hankai/*' --local-dir ./hf_download
+
 # Generate convergence plots (loss and mAP vs iteration) for the article.
 python scripts/plot_convergence.py --run-tag h100-hankai
 
@@ -83,10 +95,8 @@ python scripts/plot_convergence.py --run-tag h100-hankai
 ROBOFLOW_API_KEY=xxx python scripts/pull_sample_images.py --split test --count 30
 
 # Run bbox inference locally on the sampled images (OpenCV DNN, CPU is enough).
-python scripts/run_inference.py --images-dir run_artifacts/sample_images_roboflow --limit 30
+python scripts/run_inference.py --images-dir ./sample_images --limit 30
 ```
-
-Outputs land in `run_artifacts/{run_tag}/plots/` and `run_artifacts/{run_tag}/detections/`.
 
 ## Results
 
@@ -101,4 +111,4 @@ Test mAP@0.50:
 | YOLOv4-tiny + GA          | **89.75%** | 0.626 | 0.891 | 0.735 | **0.007003** |
 | YOLOv4-tiny + ES + GA     | 86.23% | 0.624 | 0.847 | 0.718 | 0.007003 |
 
-GA found a learning rate of `0.007003` (paper Salim & Suharjito 2023: `0.007465`, consistent range). GA alone improves test mAP by +1.76pp over baseline. Early stopping with patience=5 triggered too aggressively on the GA-tuned LR (stopped at iter 4258), see `run_artifacts/h100-hankai/plots/`.
+GA found a learning rate of `0.007003` (paper Salim & Suharjito 2023: `0.007465`, consistent range). GA alone improves test mAP by +1.76pp over baseline. Early stopping with patience=5 triggered too aggressively on the GA-tuned LR (stopped at iter 4258). Full logs and plots available on the [HF repo](https://huggingface.co/dutaav/yolov4-tiny-hpo-ffb-maturity/tree/main/runs/h100-hankai).

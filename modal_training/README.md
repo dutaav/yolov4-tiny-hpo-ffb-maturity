@@ -1,6 +1,6 @@
 # Modal Training
 
-YOLOv4-tiny training pipeline running on Modal (A100-40GB GPU for training and evaluation, CPU for build and upload steps), uploading results to HuggingFace Hub.
+YOLOv4-tiny training pipeline running on Modal (H100 GPU for training and evaluation, CPU for build and upload steps), uploading results to HuggingFace Hub.
 
 ## Setup (one-time)
 
@@ -45,15 +45,15 @@ cd modal_training
 modal run app.py
 ```
 
-Estimated time on the configured GPUs (A100-40GB for all training and evaluation, matches the GPU used in the reference paper):
-- Build darknet: ~5 minutes (one-time)
-- Dataset download: ~3 minutes (one-time)
-- Model 1 + Model 2 (parallel on A100-40GB): ~25-40 minutes
-- GA (5 generations x 10 parallel evaluations on A100-40GB): ~15-25 minutes
-- Model 3 + Model 4 (parallel on A100-40GB): ~25-40 minutes
+Actual times from the H100 run:
+- Build darknet: ~5 minutes (one-time, cached)
+- Dataset download: ~3 minutes (one-time, cached)
+- Model 1 + Model 2 (parallel): ~61 min (model1=60.6 min, model2=40.7 min)
+- GA (5 generations x 10 parallel fitness evals, 3000 iter each): variable
+- Model 3 + Model 4 (parallel): ~57 min (model3=56.6 min, model4=30.3 min)
 - Evaluation + upload: ~5 minutes
 
-Total: approximately 2.5-3.5 hours. Estimated cost: $3-5.
+Total wall clock: ~2-3 hours. Estimated cost: ~$8-12.
 
 ### Custom runs
 
@@ -91,22 +91,29 @@ modal run app.py::build_darknet --force
 
 ## Output
 
-After completion, all artifacts are uploaded to HuggingFace:
+After completion, all artifacts are uploaded to HuggingFace under `runs/{run_tag}/`:
 
 ```
-HF_REPO/
+runs/h100-hankai/
 ├── weights/
 │   ├── model1_baseline_best.weights
 │   ├── model2_es_best.weights
 │   ├── model3_ga_best.weights
 │   └── model4_es_ga_best.weights
-├── configs/*.cfg
-├── logs/*.log
-├── artifacts/
-│   ├── metrics.json
-│   ├── ga_history.json
-│   └── training_info.json
-└── dataset_info.json
+├── configs/
+│   ├── model1_baseline.cfg
+│   ├── model2_es.cfg
+│   ├── model3_ga.cfg
+│   └── model4_es_ga.cfg
+├── logs/
+│   ├── model1_baseline.log
+│   ├── ...
+│   └── per-split eval outputs
+└── artifacts/
+    ├── metrics.json
+    ├── training_info.json
+    ├── ga_history.json
+    └── dataset_info.json
 ```
 
 Continue to `colab_inference/` for visualization in Google Colab.
