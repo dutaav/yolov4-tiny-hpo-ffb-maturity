@@ -259,7 +259,7 @@ def _run_darknet_train(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="L4",
+    gpu="H100",
     timeout=4 * 60 * 60,
 )
 def train_one_model(
@@ -326,7 +326,7 @@ def train_one_model(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="L4",
+    gpu="H100",
     timeout=60 * 60,
 )
 def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
@@ -379,7 +379,7 @@ def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="L4",
+    gpu="H100",
     timeout=30 * 60,
 )
 def evaluate_on_test(name: str, cfg_path: str, weights_path: str) -> dict:
