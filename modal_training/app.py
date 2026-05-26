@@ -21,6 +21,7 @@ image = (
     .run_commands(
         "ln -snf /usr/share/zoneinfo/$TZ /etc/localtime",
         "echo $TZ > /etc/timezone",
+        "rm -f /opt/nvidia/entrypoint.d/*banner*.sh /opt/nvidia/entrypoint.d/*license*.txt /opt/nvidia/entrypoint.d/*copyright*.txt || true",
     )
     .apt_install(
         "git", "wget", "build-essential",
@@ -473,75 +474,98 @@ def main(
     n_generations: int = 5,
     n_population: int = 10,
 ):
-    print(">>> Step 1: Build Darknet")
-    build_darknet.remote()
+    from datetime import datetime
+    from contextlib import contextmanager
 
-    print("\n>>> Step 2: Prepare dataset")
-    info = prepare_dataset.remote()
-    print(f"   classes={info['num_classes']}, "
-          f"train/val/test={info['n_train']}/{info['n_valid']}/{info['n_test']}")
+    pipeline_start = time.time()
+    step_times: dict[str, float] = {}
 
-    print("\n>>> Step 3: Train Model 1 (baseline) + Model 2 (ES) in parallel")
-    futures = [
-        train_one_model.spawn("model1_baseline", learning_rate=0.00261,
-                              use_early_stopping=False),
-        train_one_model.spawn("model2_es", learning_rate=0.00261,
-                              use_early_stopping=True, patience=5),
-    ]
-    model1_info = futures[0].get()
-    model2_info = futures[1].get()
+    def _ts() -> str:
+        return datetime.now().strftime("%H:%M:%S")
+
+    @contextmanager
+    def step(label: str):
+        print(f"\n[{_ts()}] >>> {label}")
+        t0 = time.time()
+        try:
+            yield
+        finally:
+            elapsed = time.time() - t0
+            step_times[label] = elapsed
+            mm, ss = divmod(int(elapsed), 60)
+            print(f"[{_ts()}] <<< {label} done in {mm}m {ss}s ({elapsed:.1f}s)")
+
+    print(f"[{_ts()}] === Pipeline start (run_tag={run_tag or 'none'}) ===")
+
+    with step("Step 1: Build Darknet"):
+        build_darknet.remote()
+
+    with step("Step 2: Prepare dataset"):
+        info = prepare_dataset.remote()
+        print(f"   classes={info['num_classes']}, "
+              f"train/val/test={info['n_train']}/{info['n_valid']}/{info['n_test']}")
+
+    with step("Step 3: Train Model 1 (baseline) + Model 2 (ES) in parallel"):
+        futures = [
+            train_one_model.spawn("model1_baseline", learning_rate=0.00261,
+                                  use_early_stopping=False),
+            train_one_model.spawn("model2_es", learning_rate=0.00261,
+                                  use_early_stopping=True, patience=5),
+        ]
+        model1_info = futures[0].get()
+        model2_info = futures[1].get()
 
     if skip_ga or ga_lr_override > 0:
         best_lr = ga_lr_override if ga_lr_override > 0 else 0.007465
         ga_result = {"best_lr": best_lr, "best_map": 0.0, "history": [],
                      "note": "GA skipped, used override"}
-        print(f"\n>>> Skipping GA, using LR={best_lr}")
+        print(f"\n[{_ts()}] >>> Step 4: Skipping GA, using LR={best_lr}")
+        step_times["Step 4: GA (skipped)"] = 0.0
     else:
-        print(f"\n>>> Step 4: GA ({n_generations} generations x {n_population} parallel evaluations)")
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent))
-        from ga import run_genetic_algorithm, GAConfig
+        with step(f"Step 4: GA ({n_generations} generations x {n_population} parallel evaluations)"):
+            import sys
+            sys.path.insert(0, str(Path(__file__).parent))
+            from ga import run_genetic_algorithm, GAConfig
 
-        ga_cfg = GAConfig(
-            n_population=n_population,
-            n_generations=n_generations,
-            fitness_iters=fitness_iters,
+            ga_cfg = GAConfig(
+                n_population=n_population,
+                n_generations=n_generations,
+                fitness_iters=fitness_iters,
+            )
+
+            def parallel_fitness(lrs: list[float]) -> list[float]:
+                return list(ga_fitness_eval.map(
+                    lrs,
+                    kwargs={"fitness_iters": fitness_iters},
+                ))
+
+            result = run_genetic_algorithm(parallel_fitness, ga_cfg)
+            best_lr = result.best_lr
+            ga_result = result.to_dict()
+
+    with step("Step 5: Train Model 3 (GA LR) + Model 4 (ES + GA LR) in parallel"):
+        futures = [
+            train_one_model.spawn("model3_ga", learning_rate=best_lr,
+                                  use_early_stopping=False),
+            train_one_model.spawn("model4_es_ga", learning_rate=best_lr,
+                                  use_early_stopping=True, patience=5),
+        ]
+        model3_info = futures[0].get()
+        model4_info = futures[1].get()
+
+    with step("Step 6: Evaluate all 4 models on validation + test sets"):
+        eval_futures = [
+            evaluate_on_test.spawn(m["name"], m["cfg_path"], m["weights_path"])
+            for m in [model1_info, model2_info, model3_info, model4_info]
+        ]
+        eval_results = [f.get() for f in eval_futures]
+
+    with step("Step 7: Save artifacts + upload to HuggingFace"):
+        save_artifacts.remote(
+            eval_results, ga_result,
+            [model1_info, model2_info, model3_info, model4_info],
         )
-
-        def parallel_fitness(lrs: list[float]) -> list[float]:
-            return list(ga_fitness_eval.map(
-                lrs,
-                kwargs={"fitness_iters": fitness_iters},
-            ))
-
-        result = run_genetic_algorithm(parallel_fitness, ga_cfg)
-        best_lr = result.best_lr
-        ga_result = result.to_dict()
-
-    print(f"\n>>> Step 5: Train Model 3 (GA LR) + Model 4 (ES + GA LR) in parallel")
-    futures = [
-        train_one_model.spawn("model3_ga", learning_rate=best_lr,
-                              use_early_stopping=False),
-        train_one_model.spawn("model4_es_ga", learning_rate=best_lr,
-                              use_early_stopping=True, patience=5),
-    ]
-    model3_info = futures[0].get()
-    model4_info = futures[1].get()
-
-    print("\n>>> Step 6: Evaluate all 4 models on validation + test sets")
-    eval_futures = [
-        evaluate_on_test.spawn(m["name"], m["cfg_path"], m["weights_path"])
-        for m in [model1_info, model2_info, model3_info, model4_info]
-    ]
-    eval_results = [f.get() for f in eval_futures]
-
-    print("\n>>> Step 7: Save artifacts + upload to HuggingFace")
-    save_artifacts.remote(
-        eval_results, ga_result,
-        [model1_info, model2_info, model3_info, model4_info],
-    )
-
-    url = upload_to_hf.remote(hf_repo, run_tag)
+        url = upload_to_hf.remote(hf_repo, run_tag)
 
     print("\n" + "=" * 80)
     print("FINAL RESULTS (TEST SET)")
@@ -556,3 +580,15 @@ def main(
 
     print(f"\nGA Best LR: {best_lr:.6f}")
     print(f"HF repo: {url}")
+
+    total = time.time() - pipeline_start
+    tmm, tss = divmod(int(total), 60)
+    print("\n" + "=" * 80)
+    print("STEP TIMINGS")
+    print("=" * 80)
+    for label, secs in step_times.items():
+        mm, ss = divmod(int(secs), 60)
+        pct = (secs / total * 100) if total > 0 else 0
+        print(f"  {label:<70} {mm:>3}m {ss:02d}s ({pct:5.1f}%)")
+    print("-" * 80)
+    print(f"  {'TOTAL':<70} {tmm:>3}m {tss:02d}s")
