@@ -10,7 +10,7 @@ from pathlib import Path
 import modal
 
 
-app = modal.App("palm-yolov4-tiny")
+app = modal.App("yolov4-tiny-hpo-ffb-maturity")
 
 image = (
     modal.Image.from_registry(
@@ -56,7 +56,7 @@ ROBOFLOW_WORKSPACE = "tugas-akhir-pybma"
 ROBOFLOW_PROJECT = "palm-ripeness-detection"
 ROBOFLOW_VERSION = 5
 
-HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
+HF_REPO_DEFAULT = "dutaav/yolov4-tiny-hpo-ffb-maturity"
 
 DARKNET_BUILD_VERSION = "hank-ai-v5-cmake-fulltags"
 DARKNET_REPO_URL = "https://github.com/hank-ai/darknet.git"

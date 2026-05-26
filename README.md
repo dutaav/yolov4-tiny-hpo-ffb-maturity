@@ -8,7 +8,7 @@ Replication of Salim and Suharjito (2023) with a split workflow:
 ## Structure
 
 ```
-palm-yolov4-tiny/
+yolov4-tiny-hpo-ffb-maturity/
 ├── modal_training/
 │   ├── app.py
 │   ├── darknet_utils.py
@@ -36,7 +36,7 @@ See `modal_training/README.md` for secret setup.
 ### 2. Inference on Colab
 
 1. Upload `colab_inference/PalmYOLOv4_Inference.ipynb` to Google Colab
-2. Set `HF_REPO = "dutaav/palm-yolov4-tiny"` in the first cell
+2. Set `HF_REPO = "dutaav/yolov4-tiny-hpo-ffb-maturity"` in the first cell
 3. Set `ROBOFLOW_API_KEY` for test image downloads
 4. Runtime -> Change runtime type -> GPU (T4)
 5. Run all cells
