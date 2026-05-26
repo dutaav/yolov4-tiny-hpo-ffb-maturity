@@ -28,12 +28,12 @@ Go to https://modal.com/secrets and create:
 - Go to https://huggingface.co/new
 - Repository name: `palm-yolov4-tiny`
 - Visibility: Public
-- Full name: `USERNAME/palm-yolov4-tiny`
+- Full name: `dutaav/palm-yolov4-tiny`
 
 Edit `app.py` and set:
 
 ```python
-HF_REPO_DEFAULT = "USERNAME/palm-yolov4-tiny"
+HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
 ```
 
 ## Run
@@ -80,7 +80,7 @@ modal run app.py --fitness-iters 3000 --n-generations 5 --n-population 10
 ```bash
 modal run app.py::build_darknet
 modal run app.py::prepare_dataset
-modal run app.py::upload_to_hf --repo-id USERNAME/palm-yolov4-tiny
+modal run app.py::upload_to_hf --repo-id dutaav/palm-yolov4-tiny
 ```
 
 ### Force rebuild

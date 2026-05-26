@@ -48,7 +48,7 @@ ROBOFLOW_WORKSPACE = "tugas-akhir-pybma"
 ROBOFLOW_PROJECT = "palm-ripeness-detection"
 ROBOFLOW_VERSION = 2
 
-HF_REPO_DEFAULT = "USERNAME/palm-yolov4-tiny"
+HF_REPO_DEFAULT = "dutaav/palm-yolov4-tiny"
 
 
 @app.function(
