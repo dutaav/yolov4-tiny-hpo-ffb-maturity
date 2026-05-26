@@ -260,7 +260,7 @@ def _run_darknet_train(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="H100",
+    gpu="A100-40GB",
     timeout=4 * 60 * 60,
 )
 def train_one_model(
@@ -327,7 +327,7 @@ def train_one_model(
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="H100",
+    gpu="A100-40GB",
     timeout=60 * 60,
 )
 def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
@@ -380,7 +380,7 @@ def ga_fitness_eval(learning_rate: float, fitness_iters: int = 2000) -> float:
 @app.function(
     image=image,
     volumes={VOL: volume},
-    gpu="H100",
+    gpu="A100-40GB",
     timeout=30 * 60,
 )
 def evaluate_on_test(name: str, cfg_path: str, weights_path: str) -> dict:
@@ -423,13 +423,15 @@ def save_artifacts(
     secrets=[modal.Secret.from_name("huggingface")],
     timeout=30 * 60,
 )
-def upload_to_hf(repo_id: str) -> str:
+def upload_to_hf(repo_id: str, run_tag: str = "") -> str:
     from huggingface_hub import HfApi, create_repo
 
     token = os.environ["HF_TOKEN"]
     api = HfApi(token=token)
 
     create_repo(repo_id=repo_id, token=token, exist_ok=True, repo_type="model")
+
+    prefix = f"runs/{run_tag}/" if run_tag else ""
 
     for subdir, path_in_repo in [
         (WEIGHTS_DIR, "weights"),
@@ -441,7 +443,7 @@ def upload_to_hf(repo_id: str) -> str:
             ignore = ["ga_eval_*"] if subdir == CFG_DIR else None
             api.upload_folder(
                 folder_path=subdir,
-                path_in_repo=path_in_repo,
+                path_in_repo=f"{prefix}{path_in_repo}",
                 repo_id=repo_id,
                 token=token,
                 ignore_patterns=ignore,
@@ -449,12 +451,14 @@ def upload_to_hf(repo_id: str) -> str:
 
     api.upload_file(
         path_or_fileobj=f"{VOL}/dataset_info.json",
-        path_in_repo="dataset_info.json",
+        path_in_repo=f"{prefix}dataset_info.json",
         repo_id=repo_id,
         token=token,
     )
 
     url = f"https://huggingface.co/{repo_id}"
+    if run_tag:
+        url += f"/tree/main/runs/{run_tag}"
     print(f"[hf] Uploaded to {url}")
     return url
 
@@ -462,6 +466,7 @@ def upload_to_hf(repo_id: str) -> str:
 @app.local_entrypoint()
 def main(
     hf_repo: str = HF_REPO_DEFAULT,
+    run_tag: str = "",
     skip_ga: bool = False,
     ga_lr_override: float = 0.0,
     fitness_iters: int = 2000,
@@ -536,7 +541,7 @@ def main(
         [model1_info, model2_info, model3_info, model4_info],
     )
 
-    url = upload_to_hf.remote(hf_repo)
+    url = upload_to_hf.remote(hf_repo, run_tag)
 
     print("\n" + "=" * 80)
     print("FINAL RESULTS (TEST SET)")
