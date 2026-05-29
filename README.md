@@ -20,6 +20,7 @@ yolov4-tiny-hpo-ffb-maturity/
 │
 └── scripts/                     local helpers (run after training)
     ├── plot_convergence.py      loss + mAP convergence plots from logs
+    ├── count_class_distribution.py  per-class bbox counts (Modal volume)
     ├── run_inference.py         OpenCV DNN inference (no darknet compile)
     └── pull_sample_images.py    fetch a small test-image subset from Roboflow
 ```
@@ -89,6 +90,9 @@ huggingface-cli download dutaav/yolov4-tiny-hpo-ffb-maturity --include 'runs/h10
 
 # Generate convergence plots (loss and mAP vs iteration) for the article.
 python scripts/plot_convergence.py --run-tag h100-hankai
+
+# Count per-class bounding box distribution across splits (runs on Modal volume).
+modal run scripts/count_class_distribution.py
 
 # Fetch a small subset of test images from Roboflow (avoids full dataset download).
 ROBOFLOW_API_KEY=xxx python scripts/pull_sample_images.py --split test --count 30
