@@ -15,7 +15,6 @@ yolov4-tiny-hpo-ffb-maturity/
 │   └── ga.py                    Genetic Algorithm
 │
 ├── colab_inference/             one-click reproducibility notebook
-│   ├── build_notebook.py        generator
 │   └── PalmYOLOv4_Inference.ipynb
 │
 └── scripts/                     local helpers (run after training)
@@ -70,15 +69,6 @@ Models 1+2 train in parallel, then GA runs (5 gen x 10 individuals, each fitness
 | **Total** | **10+ hours (disconnects)** | **~2-3 hours wall clock** |
 
 GA fitness evaluations run in parallel via `Modal.Function.map()` - 10 individuals = 10 simultaneous H100 containers per generation.
-
-## Editing the Colab notebook
-
-The notebook is generated from `build_notebook.py`. To modify:
-
-```bash
-cd colab_inference
-python3 build_notebook.py
-```
 
 ## Local scripts
 
